@@ -1,84 +1,94 @@
 package com.ds4h.scratchradiomics;
 
-import ij.IJ;
+import com.ds4h.scratchradiomics.features.IbsiFeatureExtractor;
+import com.ds4h.scratchradiomics.segmentation.SamEngine;
+import com.ds4h.scratchradiomics.segmentation.SamPostProcessor;
+import com.ds4h.scratchradiomics.segmentation.SegmentationGUI;
 import ij.ImagePlus;
 import ij.gui.Roi;
-import ij.plugin.frame.RoiManager;
+
+import org.scijava.ItemVisibility;
+import org.scijava.app.StatusService;
 import org.scijava.command.Command;
-import org.scijava.plugin.Menu;
 import org.scijava.plugin.Parameter;
 import org.scijava.plugin.Plugin;
+import org.scijava.ui.UIService;
 
-@Plugin(type = Command.class, menu = {
-        @Menu(label = "Plugins"),
-        @Menu(label = "ScratchRadiomics"),
-        @Menu(label = "Run Analysis")
-})
+import java.util.Map;
+
+@Plugin(type = Command.class, menuPath = "Plugins > ScratchRadiomics")
 public class ScratchRadiomicsPlugin implements Command {
 
-    @Parameter(label = "Input Image", description = "Select image from scratch assay")
+    @Parameter
+    private UIService uiService;
+
+    @Parameter
+    private StatusService statusService;
+
+    @Parameter(label = "Input Image", required = true)
     private ImagePlus currentImage;
 
-    @Parameter(label = "Abilita Segmentazione Automatica SAM")
-    private boolean useSam = true;
+    @Parameter(label = "ROI Name")
+    private String roiName;
 
-    @Parameter(label = "Soglia Binning IBSI", min = "8", max = "256")
-    private int ibsiBinNumber = 32;
+    @Parameter(label = "Enable Manual Click Prompt")
+    private boolean enableClickPrompt;
+
+    @Parameter(visibility = ItemVisibility.MESSAGE, label = "--- IBSI Radiomics Options ---")
+    private final String radiomicsHeader = "";
+
+    @Parameter(label = "Extract IBSI Features")
+    private boolean extractFeatures;
+
+    @Parameter(label = "Export Report to Excel (.xlsx)")
+    private boolean exportExcel;
 
     @Override
     public void run() {
         if (currentImage == null) {
-            IJ.error("ScratchRadiomics", "Apri prima un'immagine!");
+            uiService.showDialog("Open an image on Fiji");
             return;
         }
 
-        IJ.log("=== Avvio ScratchRadiomics ===");
-        IJ.log("Immagine: " + currentImage.getTitle());
+        final SegmentationGUI gui = new SegmentationGUI(currentImage, uiService, statusService);
 
-        // 1. Step di Segmentazione (SAM -> ROI Manager)
-        if (useSam) {
-            IJ.log("Esecuzione segmentazione SAM...");
-            runSamSegmentation();
+        if (enableClickPrompt) {
+            gui.enableInteractivePrompt((x, y) -> processSegmentation(x, y, gui));
+        } else {
+            final int centerX = currentImage.getWidth() / 2;
+            final int centerY = currentImage.getHeight() / 2;
+            processSegmentation(centerX, centerY, gui);
         }
-
-        // 2. Notifica all'utente per eventuale editing con ROI Manager
-        RoiManager rm = RoiManager.getRoiManager();
-        IJ.showMessage("Segmentazione Completata",
-                "La maschera è stata caricata nel ROI Manager.\n" +
-                        "Usa gli strumenti di Fiji per aggiungere, rimuovere o combinare le ROI se necessario,\n" +
-                        "quindi premi OK per calcolare le feature IBSI e generare l'Excel.");
-
-        // 3. Calcolo Feature IBSI sulle ROI definite dall'utente
-        IJ.log("Calcolo feature radiomiche IBSI in corso...");
-        calculateIbsiFeatures(rm);
-
-        IJ.log("=== Processo Completato ===");
     }
 
-    private void runSamSegmentation() {
-        // TODO: Integrazione modulo ONNX per SAM
-        // Per ora aggiungiamo una ROI fittizia al ROI Manager come dimostrazione
-        RoiManager rm = RoiManager.getRoiManager();
-        Roi demoRoi = new Roi(10, 10, currentImage.getWidth() - 20, currentImage.getHeight() - 20);
-        rm.addRoi(demoRoi);
-    }
+    private void processSegmentation(int clickX, int clickY, SegmentationGUI gui) {
+        try (final SamEngine samEngine = new SamEngine()) {
+            gui.updateStatus("Loading SAM inference...");
 
-    private void calculateIbsiFeatures(RoiManager rm) {
-        // TODO: Invoco del modulo per estrazione IBSI ed esportazione Excel
-    }
+            final float[] dummyEmbeddings = new float[256 * 64 * 64];
 
-    // Main metod per avviare Fiji direttamente da IDE (Eclipse/IntelliJ/VSCode)
-    public static void main(final String... args) {
-        final net.imagej.ImageJ ij = new net.imagej.ImageJ();
-        ij.ui().showUI();
+            final boolean[][] mask = samEngine.predictMask(
+                    dummyEmbeddings, clickX, clickY,
+                    currentImage.getWidth(), currentImage.getHeight()
+            );
 
-        // Apri un'immagine di test
-        ImagePlus imp = IJ.openImage("http://imagej.net/images/blobs.gif");
-        if (imp != null) {
-            imp.show();
+            final Roi roi = SamPostProcessor.convertMaskToRoiAndAddToManager(mask, currentImage, roiName);
+
+            if (roi != null) {
+                gui.updateStatus("Segmentation completed with success!");
+
+                if (extractFeatures) {
+                    gui.updateStatus("Calculating IBSI radiomic features...");
+                    final Map<String, Double> ibsiFeatures = IbsiFeatureExtractor.extractFeatures(currentImage, roi);
+                    gui.showResultsDialog(currentImage.getTitle(), roiName, ibsiFeatures);
+                    gui.updateStatus("Radiomic analysis completed with success!");
+                }
+            } else {
+                gui.showNotification("No identified region in the selected point");
+            }
+
+        } catch (Exception e) {
+            gui.showNotification("Error during the segmentation: " + e.getMessage());
         }
-
-        // Esegui il plugin
-        ij.command().run(ScratchRadiomicsPlugin.class, true);
     }
 }

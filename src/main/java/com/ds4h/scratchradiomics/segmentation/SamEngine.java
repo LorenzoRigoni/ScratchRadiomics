@@ -1,12 +1,10 @@
 package com.ds4h.scratchradiomics.segmentation;
 import ai.onnxruntime.*;
-import ij.IJ;
-import ij.ImagePlus;
-import ij.process.ByteProcessor;
-import ij.process.ImageProcessor;
 
-import java.awt.Point;
-import java.awt.Rectangle;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
 import java.nio.FloatBuffer;
 import java.util.HashMap;
 import java.util.Map;
@@ -20,106 +18,95 @@ public class SamEngine implements AutoCloseable {
     private final OrtEnvironment env;
     private final OrtSession session;
 
-    private static final int TARGET_SIZE = 1024;
-    private static final float[] MEAN = {123.675f, 116.28f, 103.53f};
-    private static final float[] STD = {58.395f, 57.12f, 57.375f};
-
-    /**
-     * Initialize the ONNX session by upload the model from the file.
-     *
-     * @param modelPath The .onnx file path with the SAM model
-     * @throws OrtException If the file loading fails
-     */
-    public SamEngine(String modelPath) throws OrtException {
+    public SamEngine() throws OrtException, IOException {
         this.env = OrtEnvironment.getEnvironment();
+        final File tempModelFile = loadModelFromResources();
         final OrtSession.SessionOptions options = new OrtSession.SessionOptions();
-        options.setOptimizationLevel(OrtSession.SessionOptions.OptLevel.BASIC_OPT);
-        this.session = env.createSession(modelPath, options);
+        this.session = env.createSession(tempModelFile.getAbsolutePath(), options);
     }
 
     /**
-     * Run the segmentation of a scratch wound assay by using SAM in auto/point mode.
-     *
-     * @param imp ImageJ source image
-     * @param pointPrompt Optional point insert by the user (could be null)
-     * @param boxPrompt Optional scratch bounding box (could be null)
-     * @return ByteProcessor with the binarized mask (0 or 255) in the original dimensions
-     * @throws OrtException If ONNX inference fails
+     * Extracts a temporary file from JAR resources since ONNX Runtime requires a file path.
      */
-    public ByteProcessor segmentScratch(ImagePlus imp, Point pointPrompt, Rectangle boxPrompt) throws OrtException {
-        final int origWidth = imp.getWidth();
-        final int origHeight = imp.getHeight();
-
-        final float[] inputData = preprocessImage(imp.getProcessor());
-        final long[] shape = new long[]{1, 3, TARGET_SIZE, TARGET_SIZE};
-
-        final OnnxTensor inputTensor = OnnxTensor.createTensor(env, FloatBuffer.wrap(inputData), shape);
-
-        final Map<String, OnnxTensor> container = new HashMap<>();
-        final String inputName = session.getInputNames().iterator().next();
-        container.put(inputName, inputTensor);
-
-        try (final OrtSession.Result results = session.run(container)) {
-            final OnnxValue outputValue = results.get(0);
-            final float[][][][] maskArray = (float[][][][]) outputValue.getValue();
-
-            return postprocessMask(maskArray, origWidth, origHeight);
-        } finally {
-            inputTensor.close();
-        }
-    }
-
-    /**
-     * Converts a ImageProcessor in a normalized NCHW buffer.
-     */
-    private float[] preprocessImage(ImageProcessor ip) {
-        final ImageProcessor resized = ip.resize(TARGET_SIZE, TARGET_SIZE, true);
-        final ImageProcessor rgb = resized.convertToRGB();
-
-        final int pixelCount = TARGET_SIZE * TARGET_SIZE;
-        final float[] tensorData = new float[3 * pixelCount];
-
-        final int[] pixels = (int[]) rgb.getPixels();
-
-        for (int i = 0; i < pixelCount; i++) {
-            final int c = pixels[i];
-            final float r = (c >> 16) & 0xff;
-            final float g = (c >> 8) & 0xff;
-            final float b = c & 0xff;
-
-            tensorData[i] = (r - MEAN[0]) / STD[0]; // Red Channel
-            tensorData[pixelCount + i] = (g - MEAN[1]) / STD[1]; // Green Channel
-            tensorData[2 * pixelCount + i] = (b - MEAN[2]) / STD[2]; // Blue Channel
+    private File loadModelFromResources() throws IOException {
+        final InputStream is = getClass().getResourceAsStream("/models/sam_vit_b.onnx");
+        if (is == null) {
+            throw new IOException("Model resource not found: " + "/models/sam_vit_b.onnx");
         }
 
-        return tensorData;
-    }
+        final File tempFile = File.createTempFile("sam_vit_b_", ".onnx");
+        tempFile.deleteOnExit();
 
-    /**
-     * Resize and binarize the tensor output mask.
-     */
-    private ByteProcessor postprocessMask(float[][][][] maskArray, int origWidth, int origHeight) {
-        final ByteProcessor mask1024 = new ByteProcessor(TARGET_SIZE, TARGET_SIZE);
-        final byte[] maskPixels = (byte[]) mask1024.getPixels();
-
-        for (int y = 0; y < TARGET_SIZE; y++) {
-            for (int x = 0; x < TARGET_SIZE; x++) {
-                final float val = maskArray[0][0][y][x];
-                maskPixels[y * TARGET_SIZE + x] = (byte) (val > 0.0f ? 255 : 0);
+        try (final FileOutputStream fos = new FileOutputStream(tempFile)) {
+            final byte[] buffer = new byte[8192];
+            int bytesRead;
+            while ((bytesRead = is.read(buffer)) != -1) {
+                fos.write(buffer, 0, bytesRead);
             }
         }
+        return tempFile;
+    }
 
-        final ImageProcessor finalMask = mask1024.resize(origWidth, origHeight, false);
-        return finalMask.convertToByteProcessor();
+    /**
+     * Runs SAM inference given the image embeddings and user click point.
+     *
+     * @param imageEmbeddings Float array [1, 256, 64, 64]
+     * @param pointX X coordinate of click in original image
+     * @param pointY Y coordinate of click in original image
+     * @param origWidth Original image width
+     * @param origHeight Original image height
+     * @return 2D boolean array representing the segmented binary mask
+     */
+    public boolean[][] predictMask(float[] imageEmbeddings, float pointX, float pointY, int origWidth, int origHeight) throws OrtException {
+        final Map<String, OnnxTensor> inputs = new HashMap<>();
+
+        final long[] embShape = new long[]{1, 256, 64, 64};
+        inputs.put("image_embeddings", OnnxTensor.createTensor(env, FloatBuffer.wrap(imageEmbeddings), embShape));
+
+        final float[] coordsData = new float[]{pointX, pointY};
+        final long[] coordsShape = new long[]{1, 1, 2};
+        inputs.put("point_coords", OnnxTensor.createTensor(env, FloatBuffer.wrap(coordsData), coordsShape));
+
+        final float[] labelsData = new float[]{1.0f};
+        final long[] labelsShape = new long[]{1, 1};
+        inputs.put("point_labels", OnnxTensor.createTensor(env, FloatBuffer.wrap(labelsData), labelsShape));
+
+        final float[] maskData = new float[256 * 256];
+        final long[] maskShape = new long[]{1, 1, 256, 256};
+        inputs.put("mask_input", OnnxTensor.createTensor(env, FloatBuffer.wrap(maskData), maskShape));
+
+        final float[] hasMaskData = new float[]{0.0f};
+        final long[] hasMaskShape = new long[]{1};
+        inputs.put("has_mask_input", OnnxTensor.createTensor(env, FloatBuffer.wrap(hasMaskData), hasMaskShape));
+
+        final float[] origSizeData = new float[]{(float) origHeight, (float) origWidth};
+        final long[] origSizeShape = new long[]{2};
+        inputs.put("orig_im_size", OnnxTensor.createTensor(env, FloatBuffer.wrap(origSizeData), origSizeShape));
+
+        try (final OrtSession.Result result = session.run(inputs)) {
+            if (result.get("masks").isPresent()) {
+                final float[][][][] rawMasks = (float[][][][]) result.get("masks").get().getValue();
+
+                final boolean[][] binaryMask = new boolean[origHeight][origWidth];
+                for (int y = 0; y < origHeight; y++) {
+                    for (int x = 0; x < origWidth; x++) {
+                        binaryMask[y][x] = rawMasks[0][0][y][x] > 0.0f;
+                    }
+                }
+                return binaryMask;
+            } else {
+                throw new OrtException("No masks found");
+            }
+        } finally {
+            for (final OnnxTensor tensor : inputs.values()) {
+                tensor.close();
+            }
+        }
     }
 
     @Override
-    public void close() {
-        try {
-            if (session != null) session.close();
-            if (env != null) env.close();
-        } catch (OrtException e) {
-            IJ.error("Error while closing OrtEnvironment", e.getMessage());
-        }
+    public void close() throws OrtException {
+        if (session != null) session.close();
+        if (env != null) env.close();
     }
 }
