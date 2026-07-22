@@ -4,14 +4,146 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
-    <groupId>com.example</groupId>
+    <parent>
+        <groupId>org.scijava</groupId>
+        <artifactId>pom-scijava</artifactId>
+        <version>37.0.0</version>
+        <relativePath/>
+    </parent>
+
+    <groupId>com.ds4h.scratchradiomics</groupId>
     <artifactId>ScratchRadiomics</artifactId>
-    <version>1.0-SNAPSHOT</version>
+    <version>1.0</version>
+
+    <name>ScratchRadiomics</name>
+    <description>
+        Fiji plugin for quantitative analysis of Wound Healing Scratch Assay images.
+        Supports manual ROI drawing, automatic segmentation via micro-SAM (SAM2),
+        and extraction of radiomic features including morphology, intensity, GLCM texture,
+        and temporal closure metrics on time-lapse stacks.
+    </description>
+    <url>https://github.com/LorenzoRigoni/ScratchRadiomics.git</url>
+    <inceptionYear>2026</inceptionYear>
+    <organization>
+        <name>UNIBO Data Science For Health</name>
+        <url>https://github.com/UniBoDS4H/</url>
+    </organization>
+    <licenses>
+        <license>
+            <name>GNU General Public License v3+</name>
+            <url>https://www.gnu.org/licenses/gpl-3.0.html</url>
+            <distribution>repo</distribution>
+        </license>
+    </licenses>
+
+    <mailingLists>
+        <mailingList>
+            <name>Image.sc Forum</name>
+            <archive>https://forum.image.sc/tag/imagej</archive>
+        </mailingList>
+    </mailingLists>
+
+    <scm>
+        <connection>scm:git:https://github.com/imagej/example-legacy-plugin</connection>
+        <developerConnection>scm:git:git@github.com:imagej/example-legacy-plugin</developerConnection>
+        <tag>HEAD</tag>
+        <url>https://github.com/imagej/example-legacy-plugin</url>
+    </scm>
+    <issueManagement>
+        <system>GitHub Issues</system>
+        <url>https://github.com/imagej/example-legacy-plugin/issues</url>
+    </issueManagement>
+    <ciManagement>
+        <system>None</system>
+    </ciManagement>
+
+    <developers>
+        <developer>
+            <id>LorenzoRigoni</id>
+            <name>Lorenzo Rigoni</name>
+            <email>lorenzo.rigoni2@studio.unibo.it</email>
+            <organization>Alma Mater Studiorum - Università di Bologna</organization>
+            <roles>
+                <role>lead</role>
+                <role>developer</role>
+                <role>debugger</role>
+                <role>reviewer</role>
+                <role>support</role>
+                <role>maintainer</role>
+            </roles>
+        </developer>
+    </developers>
+
+    <contributors>
+        <contributor>
+            <name>none</name>
+        </contributor>
+    </contributors>
 
     <properties>
-        <maven.compiler.source>23</maven.compiler.source>
-        <maven.compiler.target>23</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <maven.compiler.source>11</maven.compiler.source>
+        <maven.compiler.target>11</maven.compiler.target>
+        <poi.version>5.2.5</poi.version>
+        <onnxruntime.version>1.17.1</onnxruntime.version>
+        <license.licenseName>GPL 3.0, CC0</license.licenseName>
+        <license.copyrightOwners>UNIBO Data Science For Health (DS4H).</license.copyrightOwners>
     </properties>
+
+    <repositories>
+        <repository>
+            <id>scijava.public</id>
+            <url>https://maven.scijava.org/content/groups/public/</url>
+        </repository>
+    </repositories>
+
+    <pluginRepositories>
+        <pluginRepository>
+            <id>scijava.public</id>
+            <url>https://maven.scijava.org/content/groups/public/</url>
+        </pluginRepository>
+    </pluginRepositories>
+
+    <dependencies>
+        <dependency>
+            <groupId>net.imagej</groupId>
+            <artifactId>imagej</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>net.imagej</groupId>
+            <artifactId>ij</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.scijava</groupId>
+            <artifactId>scijava-common</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.apache.poi</groupId>
+            <artifactId>poi-ooxml</artifactId>
+            <version>${poi.version}</version>
+        </dependency>
+
+        <dependency>
+            <groupId>com.microsoft.onnxruntime</groupId>
+            <artifactId>onnxruntime</artifactId>
+            <version>${onnxruntime.version}</version>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <configuration>
+                    <source>${maven.compiler.source}</source>
+                    <target>${maven.compiler.target}</target>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
 
 </project>
